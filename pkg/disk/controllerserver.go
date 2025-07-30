@@ -39,7 +39,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -77,12 +76,6 @@ type diskVolumeArgs struct {
 	BurstingEnabled  bool
 	RequestGB        int64
 }
-
-var veasp = struct {
-	IDKey         string
-	Prefix        string
-	RetentionDays int
-}{"volumeExpandAutoSnapshotID", "volume-expand-auto-snapshot-", 1}
 
 var delVolumeSnap sync.Map
 
@@ -198,6 +191,8 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 			switch aliErr.ErrorCode() {
 			case SnapshotNotFound:
 				return nil, status.Errorf(codes.NotFound, "snapshot %s not found", snapshotID)
+			default:
+				return nil, status.Error(codes.Internal, err.Error())
 			}
 		}
 		return nil, err
@@ -262,7 +257,7 @@ func (cs *controllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVol
 				// TODO: ECI does not support multi-attach?
 				return nil, status.Errorf(codes.Internal, "refuse to delete disk on serverless instance %s", disk.InstanceId)
 			}
-			err := cs.ad.detachDisk(ctx, ecsClient, req.VolumeId, disk.InstanceId)
+			err := cs.ad.detachDisk(ctx, ecsClient, req.VolumeId, disk.InstanceId, false)
 			if err != nil {
 				newErrMsg := utils.FindSuggestionByErrorMessage(err.Error(), utils.DiskDelete)
 				return nil, status.Errorf(codes.Internal, "DeleteVolume: detach disk: %s from node: %s with error: %s", req.VolumeId, disk.InstanceId, newErrMsg)
@@ -393,7 +388,7 @@ func (cs *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *
 	}
 
 	klog.Infof("ControllerUnpublishVolume: detach disk: %s from node: %s", req.VolumeId, req.NodeId)
-	err = cs.ad.detachDisk(ctx, ecsClient, req.VolumeId, req.NodeId)
+	err = cs.ad.detachDisk(ctx, ecsClient, req.VolumeId, req.NodeId, false)
 	if err != nil {
 		klog.Errorf("ControllerUnpublishVolume: detach disk: %s from node: %s with error: %s", req.VolumeId, req.NodeId, err.Error())
 		return nil, err
@@ -755,23 +750,4 @@ func formatCSISnapshot(ecsSnapshot *ecs.Snapshot) (*csi.Snapshot, error) {
 		ReadyToUse:      ecsSnapshot.Available,
 		GroupSnapshotId: groupSnapshotId,
 	}, nil
-}
-
-func updateVolumeExpandAutoSnapshotID(pvc *v1.PersistentVolumeClaim, snapshotID, option string) error {
-	var err error
-
-	volumeExpandAutoSnapshotMap := map[string]string{
-		veasp.IDKey: snapshotID,
-	}
-	for n := 1; n < RetryMaxTimes; n++ {
-		_, err = updatePvcWithAnnotations(context.Background(), pvc, volumeExpandAutoSnapshotMap, option)
-		if err != nil {
-			continue
-		}
-		break
-	}
-	if err != nil {
-		return status.Errorf(codes.Internal, "failed to %s snapshotID on pvc", option)
-	}
-	return nil
 }

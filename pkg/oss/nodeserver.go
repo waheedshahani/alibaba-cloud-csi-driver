@@ -61,6 +61,7 @@ const (
 	metricsPathPrefix = "/host/var/run/ossfs/"
 	// defaultMetricsTop
 	defaultMetricsTop = "10"
+	ossfsExecPath     = "/usr/local/bin/ossfs"
 )
 
 // for cases where fuseType does not affect like UnPublishVolume,
@@ -88,7 +89,7 @@ func validateNodePublishVolumeRequest(req *csi.NodePublishVolumeRequest) error {
 }
 
 func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
-	klog.Infof("NodePublishVolume:: Starting Mount volume: %s mount with req: %+v", req.VolumeId, req)
+	klog.Infof("NodePublishVolume:: Starting Mount volume: %s", req.VolumeId)
 	if !ns.locks.TryAcquire(req.VolumeId) {
 		return nil, status.Errorf(codes.Aborted, "There is already an operation for %s", req.VolumeId)
 	}
@@ -109,9 +110,8 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	}
 
 	// parse options
-	region, _ := ns.metadata.Get(metadata.RegionID)
 	// ensure fuseType is not empty
-	opts := parseOptions(req.GetVolumeContext(), req.GetSecrets(), []*csi.VolumeCapability{req.GetVolumeCapability()}, req.GetReadonly(), region, "", true)
+	opts := parseOptions(req.GetVolumeContext(), req.GetSecrets(), []*csi.VolumeCapability{req.GetVolumeCapability()}, req.GetReadonly(), "", true, ns.metadata)
 	if err := setCNFSOptions(ctx, ns.cnfsGetter, opts); err != nil {
 		return nil, err
 	}
@@ -152,17 +152,24 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 
 	// get mount proxy socket path
 	socketPath := req.PublishContext[mountProxySocket]
-	if socketPath == "" {
+	if socketPath == "" && !ns.skipAttach {
 		return nil, status.Errorf(codes.InvalidArgument, "%s not found in publishContext", mountProxySocket)
 	}
-	proxyMounter := mounter.NewProxyMounter(socketPath, ns.rawMounter)
+
+	// Note: In ACK and ACS GPU scenarios, the socket path is provided by publishContext.
+	var ossfsMounter mounter.Mounter
+	if socketPath == "" {
+		ossfsMounter = mounter.NewOssCmdMounter(ossfsExecPath, req.VolumeId, ns.metadata, ns.rawMounter)
+	} else {
+		ossfsMounter = mounter.NewProxyMounter(socketPath, ns.rawMounter)
+	}
 
 	// When work as csi-agent, directly mount on the target path.
 	if ns.skipAttach {
 		if opts.FuseType == OssFsType {
 			utils.WriteMetricsInfo(metricsPathPrefix, req, opts.MetricsTop, OssFsType, "oss", opts.Bucket)
 		}
-		err := proxyMounter.MountWithSecrets(mountSource, targetPath, opts.FuseType, mountOptions, authCfg.Secrets)
+		err := ossfsMounter.MountWithSecrets(mountSource, targetPath, opts.FuseType, mountOptions, authCfg)
 		if err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
@@ -181,8 +188,8 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		if opts.FuseType == OssFsType {
 			utils.WriteSharedMetricsInfo(metricsPathPrefix, req, OssFsType, "oss", opts.Bucket, attachPath)
 		}
-		err := mounter.NewProxyMounter(socketPath, ns.rawMounter).MountWithSecrets(
-			mountSource, attachPath, opts.FuseType, mountOptions, authCfg.Secrets)
+		err := ossfsMounter.MountWithSecrets(
+			mountSource, attachPath, opts.FuseType, mountOptions, authCfg)
 		if err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
@@ -207,7 +214,7 @@ func validateNodeUnpublishVolumeRequest(req *csi.NodeUnpublishVolumeRequest) err
 }
 
 func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
-	klog.Infof("NodeUnpublishVolume: Starting Umount OSS: %s mount with req: %+v", req.TargetPath, req)
+	klog.Infof("NodeUnpublishVolume: Starting Umount OSS: %s", req.TargetPath)
 	if !ns.locks.TryAcquire(req.VolumeId) {
 		return nil, status.Errorf(codes.Aborted, "There is already an operation for %s", req.VolumeId)
 	}

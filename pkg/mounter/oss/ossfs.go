@@ -20,8 +20,8 @@ import (
 )
 
 var defaultOssfsImageTag = "v1.88.4-80d165c-aliyun"
-var defaultOssfsUpdatedImageTag = "v1.91.6.ack.1-fca3971-aliyun"
-var defaultOssfsDbglevel = utils.DebugLevelError
+var defaultOssfsUpdatedImageTag = "v1.91.7.ack.1-570be5f-aliyun"
+var defaultOssfsDbglevel = utils.DebugLevelWarn
 
 const (
 	hostPrefix                = "/host"
@@ -298,20 +298,29 @@ func (f *fuseOssfs) getAuthOptions(o *Options, region string) (mountOptions []st
 	return
 }
 
+const (
+	KeyDbgLevel      = "dbglevel"
+	KeyMime          = "mime"
+	KeyListObjectsV2 = "listobjectsv2"
+)
+
 func (f *fuseOssfs) AddDefaultMountOptions(options []string) []string {
 	defaultOSSFSOptions := os.Getenv("DEFAULT_OSSFS_OPTIONS")
 	if defaultOSSFSOptions != "" {
 		options = append(options, strings.Split(defaultOSSFSOptions, ",")...)
 	}
 
-	alreadySet := false
+	tm := map[string]string{}
 	for _, option := range options {
-		if strings.Contains(option, "dbglevel") {
-			alreadySet = true
-			break
+		if option == "" {
+			continue
 		}
+		k, v, _ := strings.Cut(option, "=")
+		tm[k] = v
 	}
-	if !alreadySet {
+
+	// set default dbg level
+	if _, ok := tm[KeyDbgLevel]; !ok {
 		level, ok := ossfsDbglevels[f.config.Dbglevel]
 		if ok {
 			options = append(options, fmt.Sprintf("dbglevel=%s", level))
@@ -323,9 +332,32 @@ func (f *fuseOssfs) AddDefaultMountOptions(options []string) []string {
 		}
 	}
 
-	if !csiutils.IsFileExisting(filepath.Join(hostPrefix, OssfsDefMimeTypesFilePath)) && strings.ToLower(f.config.Extra["mime-support"]) == "true" {
-		// mime.types not exists, use csi-mime.types
-		options = append(options, fmt.Sprintf("mime=%s", OssfsCsiMimeTypesFilePath))
+	var allowOther bool
+	for _, option := range options {
+		if strings.Contains(option, "allow_other") {
+			allowOther = true
+			break
+		}
+	}
+	if !allowOther {
+		options = append(options, "allow_other")
+	}
+
+	// set mime
+	if _, ok := tm[KeyMime]; !ok {
+		if !csiutils.IsFileExisting(filepath.Join(hostPrefix, OssfsDefMimeTypesFilePath)) && strings.ToLower(f.config.Extra["mime-support"]) == "true" {
+			// mime.types not exists, use csi-mime.types
+			options = append(options, fmt.Sprintf("mime=%s", OssfsCsiMimeTypesFilePath))
+		}
+	}
+
+	// set listobjectsv2
+	// Note: OSS officially recommends using v2 API as the preferred version,
+	// but ossfs hasn't enabled listobjectv2 by default yet.
+	// This is a temporary workaround added by CSI driver.
+	// TODO: Remove this logic when ossfs enables it by default.
+	if _, ok := tm[KeyListObjectsV2]; !ok {
+		options = append(options, "listobjectsv2")
 	}
 
 	return options

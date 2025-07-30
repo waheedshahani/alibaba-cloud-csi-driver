@@ -64,8 +64,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		return nil, status.Errorf(codes.InvalidArgument, "ReclaimPolicy must be Retain. The current reclaimPolicy is %q", reclaimPolicy)
 	}
 
-	region, _ := cs.metadata.Get(metadata.RegionID)
-	ossVol := parseOptions(req.GetParameters(), req.GetSecrets(), req.GetVolumeCapabilities(), false, region, req.GetName(), false)
+	ossVol := parseOptions(req.GetParameters(), req.GetSecrets(), req.GetVolumeCapabilities(), false, req.GetName(), false, cs.metadata)
 	volumeContext := req.GetParameters()
 	if volumeContext == nil {
 		volumeContext = map[string]string{}
@@ -78,7 +77,7 @@ func (cs *controllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		VolumeContext: volumeContext,
 	}
 
-	klog.Infof("Provision oss volume is successfully: %s,pvName: %v", req.Name, csiTargetVolume)
+	klog.Infof("Provision oss volume is successfully: %s, pvName: %v", req.Name, csiTargetVolume)
 	return &csi.CreateVolumeResponse{Volume: csiTargetVolume}, nil
 
 }
@@ -119,9 +118,8 @@ func (cs *controllerServer) ControllerPublishVolume(ctx context.Context, req *cs
 	klog.Infof("ControllerPublishVolume: volume %s on node %s", req.VolumeId, req.NodeId)
 	// parse options
 	nodeName := req.NodeId
-	region, _ := cs.metadata.Get(metadata.RegionID)
 	// ensure fuseType is not empty
-	opts := parseOptions(req.GetVolumeContext(), req.GetSecrets(), []*csi.VolumeCapability{req.GetVolumeCapability()}, req.GetReadonly(), region, "", false)
+	opts := parseOptions(req.GetVolumeContext(), req.GetSecrets(), []*csi.VolumeCapability{req.GetVolumeCapability()}, req.GetReadonly(), "", false, cs.metadata)
 	if err := setCNFSOptions(ctx, cs.cnfsGetter, opts); err != nil {
 		return nil, err
 	}

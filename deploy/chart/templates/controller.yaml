@@ -130,10 +130,19 @@ spec:
             limits:
               cpu: 500m
               memory: 1024Mi
+          ports:
+            - containerPort: 8081
+              name: disk-a-http
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz/leader-election
+              port: disk-a-http
           args:
             - --v=5
             - --logging-format={{ .Values.logging.format }}
             - --csi-address=/csi/csi.sock
+            - --http-endpoint=:8081
             - --leader-election=true
             - --kube-api-qps=100
             - --kube-api-burst=200
@@ -154,10 +163,19 @@ spec:
             limits:
               cpu: 500m
               memory: 1Gi
+          ports:
+            - containerPort: 8082
+              name: disk-r-http
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz/leader-election
+              port: disk-r-http
           args:
             - --v=5
             - --logging-format={{ .Values.logging.format }}
             - --csi-address=/csi/csi.sock
+            - --http-endpoint=:8082
             - --leader-election
             - --handle-volume-inuse-error=false
           securityContext:
@@ -250,10 +268,19 @@ spec:
             limits:
               cpu: 500m
               memory: 1Gi
+          ports:
+            - containerPort: 8092
+              name: nas-r-http
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz/leader-election
+              port: nas-r-http
           args:
             - --v=5
             - --logging-format={{ .Values.logging.format }}
             - --csi-address=/csi/csi.sock
+            - --http-endpoint=:8092
             - --leader-election
             - --handle-volume-inuse-error=false
           securityContext:
@@ -307,10 +334,19 @@ spec:
             limits:
               cpu: 500m
               memory: 1024Mi
+          ports:
+            - containerPort: 8101
+              name: oss-a-http
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz/leader-election
+              port: oss-a-http
           args:
             - --v=5
             - --logging-format={{ .Values.logging.format }}
             - --csi-address=/csi/csi.sock
+            - --http-endpoint=:8101
             - --leader-election=true
             - --kube-api-qps=100
             - --kube-api-burst=200
@@ -390,10 +426,19 @@ spec:
             limits:
               cpu: 500m
               memory: 1Gi
+          ports:
+            - containerPort: 8112
+              name: local-r-http
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz/leader-election
+              port: local-r-http
           args:
             - --v=5
             - --logging-format={{ .Values.logging.format }}
             - --csi-address=/csi/csi.sock
+            - --http-endpoint=:8112
             - --leader-election
             - --handle-volume-inuse-error=false
           securityContext:

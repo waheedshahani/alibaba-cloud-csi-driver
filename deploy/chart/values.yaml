@@ -14,6 +14,12 @@ logging:
     logstore:
       name: alibabacloud-csi-plugin
 
+monitoring:
+  plugin:
+    enabled: false
+  controller:
+    enabled: false
+
 csi:
   disk:
     enabled: true
@@ -60,8 +66,8 @@ deploy:
 
   # By default, the controller server does not delete NAS subpaths when DeleteVolume, that means
   # the files created in the volume will remain in the filesystem after PV deleted.
-  # You can set "withStorageController" to true in ACK clusters with storage-operator addon installed,
-  # then the controller server will patch a finalizer on NAS subpath-type PV when DeleteVolume
+  # You can set "withStorageController" to true in ACK clusters with storage-operator addon installed, 
+  # then the controller server will patch a finalizer on NAS subpath-type PV when DeleteVolume 
   # and the storage-controller will handle the cleanup of the subpath in NAS filesystem.
   withStorageController: false
 
@@ -113,13 +119,13 @@ images:
     tag: "v0.2.0"
   externalAttacher:
     repo: acs/csi-attacher
-    tag: "v4.6.1-aliyun"
+    tag: "v4.9.0-aliyun"
   externalProvisioner:
     repo: acs/csi-provisioner
     tag: "v5.3.0-aliyun"
   externalResizer:
     repo: acs/csi-resizer
-    tag: "v1.11.2-aliyun"
+    tag: "v1.14.0-aliyun"
   externalSnapshotter:
     repo: acs/csi-snapshotter
     tag: "v8.1.1-aliyun"
@@ -131,10 +137,10 @@ images:
     tag: "v2.14.0-aliyun"
   ossfs:
     repo: acs/csi-ossfs
-    tag: "v1.91.6.ack.1-fca3971-aliyun"
+    tag: "v1.91.7.ack.1-570be5f-aliyun"
   ossfs2:
     repo: acs/csi-ossfs2
-    tag: "v2.0.1.ack.1-ecb0808-aliyun"
+    tag: "v2.0.2.ack.1-a76655f-aliyun"
 
 # List of image pull secrets to use for pulling images.
 imagePullSecrets: [ ]

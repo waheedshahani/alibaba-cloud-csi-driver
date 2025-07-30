@@ -197,10 +197,18 @@ func (ad *DiskAttachDetach) attachDisk(ctx context.Context, diskID, nodeID strin
 		logger.V(1).Info("attaching unknown disk category, best effort", "category", disk.Category)
 	}
 
+	canForceAttach := false
+	if cate.ForceAttach {
+		if i, ok := ad.detaching.Load(diskID); ok && i.(string) == disk.InstanceId {
+			canForceAttach = true
+		}
+	}
+
 	tryForceAttach := false
 
 	// disk is attached, means disk_ad_controller env is true, disk must be created after 2020.06
-	if disk.Status == DiskStatusInuse {
+	switch disk.Status {
+	case DiskStatusInuse:
 		if disk.InstanceId == nodeID {
 			if !fromNode {
 				klog.Infof("AttachDisk: Disk %s is already attached to Instance %s, skipping", diskID, disk.InstanceId)
@@ -236,12 +244,8 @@ func (ad *DiskAttachDetach) attachDisk(ctx context.Context, diskID, nodeID strin
 		if !GlobalConfigVar.DetachBeforeAttach {
 			return "", status.Errorf(codes.Aborted, "AttachDisk: Disk %s is already attached to instance %s, env DISK_FORCE_DETACHED is false reject force detach", diskID, disk.InstanceId)
 		}
-		if i, ok := ad.detaching.Load(diskID); ok && i.(string) == disk.InstanceId {
-			if cate.ForceAttach {
-				tryForceAttach = true
-			} else {
-				return "", status.Errorf(codes.Aborted, "AttachDisk: disk %s is being detached from %s", diskID, disk.InstanceId)
-			}
+		if canForceAttach {
+			tryForceAttach = true
 		} else {
 			klog.Infof("AttachDisk: Disk %s is already attached to instance %s, will be detached", diskID, disk.InstanceId)
 			detachRequest := ecs.CreateDetachDiskRequest()
@@ -260,8 +264,12 @@ func (ad *DiskAttachDetach) attachDisk(ctx context.Context, diskID, nodeID strin
 				return "", err
 			}
 		}
-	} else if disk.Status == DiskStatusAttaching {
+	case DiskStatusAttaching:
 		return "", status.Errorf(codes.Aborted, "AttachDisk: Disk %s is attaching %v", diskID, disk)
+	case DiskStatusDetaching:
+		if canForceAttach {
+			tryForceAttach = true
+		}
 	}
 
 	// Step 3: Attach Disk, list device before attach disk
@@ -276,7 +284,10 @@ func (ad *DiskAttachDetach) attachDisk(ctx context.Context, diskID, nodeID strin
 	attachRequest := ecs.CreateAttachDiskRequest()
 	attachRequest.InstanceId = nodeID
 	attachRequest.DiskId = diskID
-	attachRequest.Force = requests.NewBoolean(tryForceAttach)
+	if tryForceAttach {
+		attachRequest.Force = requests.NewBoolean(true)
+		logger.V(1).Info("try force attach", "from", disk.InstanceId, "to", nodeID)
+	}
 	if cate.SingleInstance {
 		attachRequest.DeleteWithInstance = requests.NewBoolean(true)
 	}
@@ -409,7 +420,7 @@ func (ad *DiskAttachDetach) detachMultiAttachDisk(ctx context.Context, ecsClient
 	return true, nil
 }
 
-func (ad *DiskAttachDetach) detachDisk(ctx context.Context, ecsClient *ecs.Client, diskID, nodeID string) (err error) {
+func (ad *DiskAttachDetach) detachDisk(ctx context.Context, ecsClient *ecs.Client, diskID, nodeID string, fromNode bool) (err error) {
 	disk, err := ad.findDiskByID(ctx, diskID)
 	if err != nil {
 		klog.Errorf("DetachDisk: Describe volume: %s from node: %s, with error: %s", diskID, nodeID, err.Error())
@@ -417,6 +428,10 @@ func (ad *DiskAttachDetach) detachDisk(ctx context.Context, ecsClient *ecs.Clien
 	}
 	if disk == nil {
 		klog.Infof("DetachDisk: Detach Disk %s from node %s describe and find disk not exist", diskID, nodeID)
+		return nil
+	}
+	if fromNode && disk.MultiAttach == "Enabled" {
+		klog.Infof("DetachDisk: Skip detach multi-attach disk %s from node, it will be detached by controller", diskID)
 		return nil
 	}
 
@@ -447,7 +462,7 @@ func (ad *DiskAttachDetach) detachDisk(ctx context.Context, ecsClient *ecs.Clien
 	ad.detaching.Store(diskID, nodeID)
 	detachDiskRequest := ecs.CreateDetachDiskRequest()
 	detachDiskRequest.DiskId = disk.DiskId
-	detachDiskRequest.InstanceId = disk.InstanceId
+	detachDiskRequest.InstanceId = nodeID
 	if AllCategories[Category(disk.Category)].SingleInstance {
 		detachDiskRequest.DeleteWithInstance = requests.NewBoolean(true)
 	}
@@ -959,11 +974,11 @@ func createDisk(ecsClient cloud.ECSInterface, diskName, snapshotID string, diskV
 			if errors.Is(err, ErrParameterMismatch) {
 				if createDiskRequest.ClientToken == "" {
 					// protect us from infinite loop
-					return "", attempt, fmt.Errorf("unexpected parameter mismatch")
+					return "", attempt, status.Error(codes.Internal, "unexpected parameter mismatch")
 				}
 				existingDisk, err := findDiskByName(diskName, ecsClient)
 				if err != nil {
-					return "", attempt, fmt.Errorf("parameter mismatch detected, but fetch existing node failed: %w", err)
+					return "", attempt, status.Errorf(codes.Internal, "parameter mismatch detected, but fetch existing disk failed: %v", err)
 				}
 				if existingDisk == nil {
 					// No existing disk, retry without client token
@@ -982,7 +997,7 @@ func createDisk(ecsClient cloud.ECSInterface, diskName, snapshotID string, diskV
 		}
 		return diskID, attempt, nil
 	}
-	return "", createAttempt{}, status.Errorf(codes.Internal, "all attempts failed: %s", strings.Join(messages, "; "))
+	return "", createAttempt{}, status.Errorf(codes.InvalidArgument, "all attempts failed: %s", strings.Join(messages, "; "))
 }
 
 func buildCreateDiskRequest(diskVol *diskVolumeArgs) *ecs.CreateDiskRequest {
